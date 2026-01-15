@@ -19,18 +19,29 @@ exports.isRegistredBefore = async (req, res) => {
       res.json({ status: "ACCESS DENIED" });
     } else {
       const authToken = jwt.sign({ deviceId }, process.env.SECRET_KEY, {
-        expiresIn: "7d",
+        expiresIn: "5d",
       });
 
       let existingUser = await User.findOne({ deviceId }); // payload in deviceId
       if (!existingUser) {
-        res.json({ status: "DELETED", authToken });
+        const archivedUser = await ArchivedUser.findOne({ deviceId });
+        if (archivedUser) {
+          res.json({ status: "DELETED", authToken });
+        } else {
+          res.json({ status: "NEW USER", authToken });
+        }
       } else {
-        res.json({ status: "REGISTERED", authToken, userInfo: `${existingUser.firstName}#${existingUser.lastName}#${
-        keyService.formatDate(existingUser.birthDate) || ""
-      }#${existingUser.placeOfBirth}#${existingUser.email}#${existingUser.phone}#${existingUser.school}#${
-        existingUser.address
-      }#${existingUser.userType}` });
+        res.json({
+          status: "REGISTERED",
+          authToken,
+          userInfo: `${existingUser.firstName}#${existingUser.lastName}#${
+            keyService.formatDate(existingUser.birthDate) || ""
+          }#${existingUser.placeOfBirth}#${existingUser.email}#${
+            existingUser.phone
+          }#${existingUser.school}#${existingUser.address}#${
+            existingUser.userType
+          }`,
+        });
       }
     }
   } catch (err) {
@@ -42,15 +53,15 @@ exports.isRegistredBefore = async (req, res) => {
 exports.registerNewUser = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
-  
+
   try {
     const { deviceId, soldToken } = req.body;
-    
+
     const sldToken = soldToken.toUpperCase();
 
     // Validate the sold token within the transaction
     const isValid = await keyService.validateKey(sldToken);
-    
+
     if (isValid.consumed || !isValid) {
       await session.abortTransaction();
       session.endSession();
@@ -58,7 +69,9 @@ exports.registerNewUser = async (req, res) => {
     }
 
     // Check for existing contract
-    const existingContract = await Contract.findOne({ soldToken: sldToken }).session(session);
+    const existingContract = await Contract.findOne({
+      soldToken: sldToken,
+    }).session(session);
     if (existingContract) {
       if (deviceId !== existingContract.deviceId) {
         await session.abortTransaction();
@@ -78,25 +91,35 @@ exports.registerNewUser = async (req, res) => {
     if (!existingUser) {
       // Create new user and contract in a single transaction
       const [newUser, newContract] = await Promise.all([
-        User.create([{
-          deviceId,
-          firstName: "first name",
-          lastName: "last name",
-          birthDate: "01/01/2005 15:30:05",
-          placeOfBirth: "Alger",
-          email: "example",
-          phone: "0500000000",
-          school: "school",
-          address: "البلدية",
-          userType: type,
-        }], { session }),
-        
-        Contract.create([{
-          deviceId,
-          soldToken: sldToken,
-          startDate: new Date(),
-          expiringDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // one year
-        }], { session })
+        User.create(
+          [
+            {
+              deviceId,
+              firstName: "first name",
+              lastName: "last name",
+              birthDate: "01/01/2005 15:30:05",
+              placeOfBirth: "Alger",
+              email: "example",
+              phone: "0500000000",
+              school: "school",
+              address: "البلدية",
+              userType: type,
+            },
+          ],
+          { session }
+        ),
+
+        Contract.create(
+          [
+            {
+              deviceId,
+              soldToken: sldToken,
+              startDate: new Date(),
+              expiringDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // one year
+            },
+          ],
+          { session }
+        ),
       ]);
 
       // Update sold token status
@@ -112,14 +135,17 @@ exports.registerNewUser = async (req, res) => {
 
       await session.commitTransaction();
       session.endSession();
-      
+
       console.log(`🆕 New user registered: ${deviceId}`);
-      const user = newUser[0]
-      return res.json({ status: "CREATED", userInfo: `${user.firstName}#${user.lastName}#${
-        keyService.formatDate(user.birthDate) || ""
-      }#${user.placeOfBirth}#${user.email}#${user.phone}#${user.school}#${
-        user.address
-      }#${user.userType}`});
+      const user = newUser[0];
+      return res.json({
+        status: "CREATED",
+        userInfo: `${user.firstName}#${user.lastName}#${
+          keyService.formatDate(user.birthDate) || ""
+        }#${user.placeOfBirth}#${user.email}#${user.phone}#${user.school}#${
+          user.address
+        }#${user.userType}`,
+      });
     } else {
       await session.abortTransaction();
       session.endSession();
@@ -133,7 +159,7 @@ exports.registerNewUser = async (req, res) => {
   }
 };
 
-// $ validate auth token
+// $ validate auth token (currently not used)
 exports.validateAuthToken = async (req, res) => {
   try {
     console.log("Hello");
@@ -168,19 +194,20 @@ exports.validateAuthToken = async (req, res) => {
 // $ send new auth token
 exports.sendNewAuthToken = async (req, res) => {
   try {
-    const deviceId = req.query.deviceId;
-    const user = User.findOne({ deviceId });
-    if (!user) {
-      console.log(`❌ User not found: ${deviceId}`);
-      return { code: 404 };
+    const { deviceId, hDeviceId } = req.params;
+    console.log(deviceId, hDeviceId);
+    const isValid = verifyDeviceId(deviceId, hDeviceId);
+    console.log("isValid: ", isValid);
+    if (!isValid) {
+      res.json({ status: "ACCESS DENIED" });
+    } else {
+      const authToken = jwt.sign({ deviceId }, process.env.SECRET_KEY, {
+        expiresIn: "7d",
+      });
+      res.json({ authToken });
     }
-    const authToken = jwt.sign({ deviceId }, process.env.SECRET_KEY, {
-      expiresIn: "7d",
-    });
-    res.json({ authToken, ...user._doc });
   } catch (err) {
-    console.error("❌ Token Generation Error:", err);
-    return { code: 500 };
+    res.status(500).json({ error: err.message });
   }
 };
 
@@ -235,13 +262,16 @@ exports.saveUserInformation = async (req, res) => {
 // $ delete account
 exports.deleteAccount = async (req, res) => {
   try {
-    const [deviceId, authToken] = payload.split("#");
+    const { deviceId } = req.body;
+    console.log("deviceId from delete:", deviceId);
+    // const [deviceId, authToken] = payload.split("#");
     const user = await User.findOne({ deviceId });
     if (!user) {
+      const archivedUser = archivedUser.findOne({ deviceId });
+      if (archivedUser) {
+        res.json({ status: "DELETED" });
+      }
       res.status(500).json({ error: "user not found" });
-      return {
-        responseCode: REQUEST_RESPONSE.USER_NOT_FOUND,
-      };
     }
 
     // Convert to plain object and remove _id to avoid duplicate key error
@@ -256,7 +286,7 @@ exports.deleteAccount = async (req, res) => {
     await archivedUser.save();
     await User.deleteOne({ deviceId });
 
-    res.json({ message: "user deleted successfully" });
+    res.json({ status: "DELETED" });
   } catch (error) {
     res.status(500).json({ error: "please try again later" });
   }
@@ -265,38 +295,38 @@ exports.deleteAccount = async (req, res) => {
 // $ restore account
 exports.restoreAccount = async (req, res) => {
   try {
-    const [deviceId, authToken] = payload.split("#");
+    const { deviceId } = req.body;
     const archivedUser = await ArchivedUser.findOne({ deviceId });
     if (!archivedUser) {
+      console.log("restore hello 1")
       res.status(500).json({ error: "user not found" });
     }
-
+    console.log("restore hello 2")
     // Check if account has been archived for more than 30 days
     const archiveDate = archivedUser.archivedAt;
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     if (archiveDate < thirtyDaysAgo) {
-      res
-        .status(500)
-        .json({ error: "Account cannot be restored after 30 days" });
+      console.log("restore hello 3")
+      res.json({ status: "EXPIRED" });
     }
 
     // Convert to plain object and remove archivedAt
     const archivedUserData = archivedUser.toObject();
     delete archivedUserData._id;
     delete archivedUserData.archivedAt;
-
+    console.log("restore hello 4")
     // Create user
     const user = new User({
       ...archivedUserData,
     });
-
+    console.log("restore hello 5")
     // save user and delete archivedUser document
     await user.save();
     await ArchivedUser.deleteOne({ deviceId });
-
-    res.json({ message: "user restored" });
+    console.log("restore hello 6")
+    res.json({ status: "RESTORED" });
   } catch (error) {
     res.status(500).json({ error: "error restoring user" });
     return { success: false, error: error.message };
@@ -305,8 +335,9 @@ exports.restoreAccount = async (req, res) => {
 
 function verifyDeviceId(originalId, hashedId) {
   // Create SHA-256 hash of the original ID
+  const salt = "30BDR3rErEalOlD5";
   const hash = crypto.createHash("sha256");
-  hash.update(originalId);
+  hash.update(originalId + salt);
   const calculatedHash = hash.digest("hex");
 
   // Compare with the provided hashed ID

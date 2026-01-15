@@ -8,8 +8,8 @@ AppRoutes.post('/registerNewUser', auth, appController.registerNewUser)
 AppRoutes.post('/validateAuthToken', appController.validateAuthToken)
 AppRoutes.get('/sendNewAuthToken', appController.sendNewAuthToken)
 AppRoutes.post('/saveUserInformation', auth, appController.saveUserInformation)
-AppRoutes.delete('/deleteAccount', auth, appController.deleteAccount)
-AppRoutes.get('/restoreAccount', auth, appController.deleteAccount)
+AppRoutes.post('/deleteAccount', auth, appController.deleteAccount)
+AppRoutes.post('/restoreAccount', auth, appController.restoreAccount)
 
 
 
